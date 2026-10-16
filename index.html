@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Learning Portfolio</title>
+<style>
+  :root {
+    --bg: #fbf9f4;
+    --ink: #1f2a37;
+    --muted: #667085;
+    --line: #d9d4c7;
+    --accent: #2f5d50;
+    --hover: #eef3ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161b1a;
+      --ink: #e8ece9;
+      --muted: #9aa5a0;
+      --line: #2f3a37;
+      --accent: #8cc5b0;
+      --hover: #1f2826;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Georgia, "Times New Roman", serif;
+    line-height: 1.6;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 48px 20px 64px; }
+  h1 { font-size: 2rem; margin: 0 0 4px; line-height: 1.2; }
+  .sub { color: var(--muted); margin: 0 0 32px; font-family: system-ui, sans-serif; font-size: .95rem; }
+  ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  li { border-bottom: 1px solid var(--line); }
+  a {
+    display: block;
+    padding: 14px 8px;
+    color: var(--ink);
+    text-decoration: none;
+    font-size: 1.1rem;
+  }
+  a:hover, a:focus-visible { background: var(--hover); color: var(--accent); outline: none; }
+  a:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+  .folder { display: block; color: var(--muted); font: .8rem system-ui, sans-serif; }
+  .msg { color: var(--muted); font-family: system-ui, sans-serif; }
+  .err { color: #b42318; }
+  @media (prefers-color-scheme: dark) { .err { color: #f97066; } }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">My Learning Portfolio</h1>
+  <p class="sub" id="sub"></p>
+  <ul id="list"></ul>
+  <p class="msg" id="status">Loading your pages…</p>
+</main>
+
+<script>
+(function () {
+  var list = document.getElementById("list");
+  var status = document.getElementById("status");
+
+  // 1. Work out the owner and repository from the page address.
+  //    https://kavitha403.github.io/pages-of-progress/  ->  kavitha403 / pages-of-progress
+  //    For testing elsewhere, add ?owner=kavitha403&repo=pages-of-progress to the address.
+  var params = new URLSearchParams(location.search);
+  var owner = params.get("owner");
+  var repo = params.get("repo");
+  var host = location.hostname;
+
+  if (!owner && host.endsWith(".github.io")) {
+    owner = host.split(".")[0];
+    var firstFolder = location.pathname.split("/").filter(Boolean)[0];
+    // A repo named <owner>.github.io is served from the root of the address.
+    repo = firstFolder && firstFolder.indexOf(".") === -1 ? firstFolder : owner + ".github.io";
+  }
+
+  if (!owner || !repo) {
+    fail("This page can't tell which repository it belongs to. Open it from your GitHub Pages address, or add ?owner=YOUR_USERNAME&repo=YOUR_REPO to the address.");
+    return;
+  }
+
+  document.getElementById("sub").textContent = owner + " / " + repo;
+
+  // 2. Make a readable title from a file name.
+  function prettify(path) {
+    var name = path.split("/").pop().replace(/\.html?$/i, "");
+    name = name.replace(/\s*\(\d+\)\s*$/, "");   // "report (1)" -> "report"
+    name = name.replace(/[-_]+/g, " ").trim();
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  }
+
+  function encodePath(path) {
+    return path.split("/").map(encodeURIComponent).join("/");
+  }
+
+  function fail(text) {
+    status.textContent = text;
+    status.className = "msg err";
+  }
+
+  function render(files) {
+    list.textContent = "";
+    if (!files.length) {
+      status.textContent = "No HTML pages yet. Upload an .html file to this repository and refresh.";
+      return;
+    }
+    status.textContent = "";
+    files.forEach(function (path) {
+      var li = document.createElement("li");
+      var a = document.createElement("a");
+      a.href = "./" + encodePath(path);
+      a.textContent = prettify(path);
+      var parts = path.split("/");
+      if (parts.length > 1) {
+        var f = document.createElement("span");
+        f.className = "folder";
+        f.textContent = parts.slice(0, -1).join(" / ");
+        a.appendChild(f);
+      }
+      li.appendChild(a);
+      list.appendChild(li);
+    });
+  }
+
+  // 3. Keep a 5-minute copy of the list in the browser. GitHub allows only
+  //    60 anonymous requests per hour per internet connection, and a whole
+  //    classroom shares one. The cache keeps repeat visits from using it up.
+  var cacheKey = "pages-index:" + owner + "/" + repo;
+  var cached = null;
+  try {
+    cached = JSON.parse(localStorage.getItem(cacheKey));
+  } catch (e) { cached = null; }
+
+  if (cached && Date.now() - cached.time < 5 * 60 * 1000) {
+    render(cached.files);
+    return;
+  }
+
+  var url = "https://api.github.com/repos/" + encodeURIComponent(owner) + "/" +
+            encodeURIComponent(repo) + "/git/trees/HEAD?recursive=1";
+
+  fetch(url)
+    .then(function (r) {
+      if (r.status === 403 || r.status === 429) throw new Error("limit");
+      if (!r.ok) throw new Error("http " + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      var files = (data.tree || [])
+        .filter(function (item) {
+          return item.type === "blob" &&
+                 /\.html?$/i.test(item.path) &&
+                 item.path.toLowerCase() !== "index.html";
+        })
+        .map(function (item) { return item.path; })
+        .sort(function (a, b) { return a.localeCompare(b); });
+
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify({ time: Date.now(), files: files }));
+      } catch (e) { /* storage unavailable; fine */ }
+
+      render(files);
+    })
+    .catch(function (err) {
+      if (cached) { render(cached.files); return; }  // show the older list instead of nothing
+      if (err.message === "limit") {
+        fail("GitHub is limiting requests from this network right now. Wait a few minutes and refresh.");
+      } else {
+        fail("Couldn't load the list. Check that the repository is public and refresh.");
+      }
+    });
+})();
+</script>
+</body>
+</html>
